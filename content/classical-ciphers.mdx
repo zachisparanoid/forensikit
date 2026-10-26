@@ -1,0 +1,89 @@
+Classical ciphers are the pen-and-paper encryption schemes that predate computers — Caesar shifts, Vigenère keywords, simple letter swaps. They are trivially breakable today, but learning them teaches the core ideas behind all cryptanalysis, and they show up constantly in capture-the-flag (CTF) challenges and puzzles.
+
+## Two fundamental building blocks
+
+Almost every classical cipher is built from one or both of these operations:
+
+- **Substitution** — replace each symbol with another according to some rule. The letters change; their positions do not.
+- **Transposition** — rearrange the symbols without changing what they are. The letters stay the same; their positions change (for example, writing a message into a grid and reading it out by columns).
+
+Strong modern ciphers like AES combine many rounds of both ("confusion and diffusion"). Classical ciphers use just one, simply, which is exactly why they fall.
+
+## The substitution family
+
+**Caesar / shift cipher.** Every letter moves a fixed number of places down the alphabet. A shift of 3 turns `A` into `D`. With only 25 possible non-trivial shifts, you can break it by trying them all — pure brute force. Slide through every shift in the [Caesar Cipher](/tools/caesar-cipher) tool.
+
+**ROT13** is just Caesar with a shift of 13. Because 13 is half of 26, applying it twice returns the original — it is its own inverse, which is why it is popular for hiding spoilers rather than securing anything.
+
+**Atbash** maps the alphabet onto its reverse: `A↔Z`, `B↔Y`, and so on. Like ROT13 it is a fixed, keyless substitution, so it is recognizable on sight once you know to look for it.
+
+**Simple (monoalphabetic) substitution** uses an arbitrary, fixed mapping of each letter to another — 26! possible keys, far too many to brute force. Yet it is still easy to break, because it preserves the _frequency_ of each letter.
+
+**Vigenère** is a _polyalphabetic_ substitution: a keyword chooses a different Caesar shift for each position, cycling through the key. For centuries it was called "le chiffre indéchiffrable" because it flattens single-letter frequencies. Encrypt and decrypt it in the [Vigenère Cipher](/tools/vigenere-cipher) tool.
+
+**XOR** is the bitwise cousin of substitution. Each byte of plaintext is XORed with a repeating key. A single-byte XOR has only 256 keys (brute-forceable instantly), and repeating-key XOR succumbs to frequency-style attacks. Work with it in the [XOR Cipher](/tools/xor-cipher) tool.
+
+```text
+Caesar shift +3:   HELLO -> KHOOR
+ROT13:             HELLO -> URYYB   (apply again to undo)
+Atbash:            HELLO -> SVOOL
+Vigenère, key KEY: HELLO -> RIJVS
+```
+
+<Callout type="note" title="ROT13 round-trips in one line">
+Because ROT13 is self-inverse, decoding is the same operation as encoding. On a Unix shell you can even chain transforms — handy in CTFs:
+
+```bash
+echo "Uryyb" | rev          # -> bbyrU   (reverse the string)
+echo "Uryyb" | tr 'A-Za-z' 'N-ZA-Mn-za-m'   # ROT13 -> Hello
+```
+
+</Callout>
+
+## How to break them
+
+The art of cryptanalysis is exploiting the statistical structure these ciphers leave behind.
+
+**Frequency analysis.** In English, `E` is the most common letter (~12.7%), followed by `T`, `A`, `O`. Any cipher that maps each letter to one fixed substitute preserves these frequencies — so the most common cipher letter is probably `E`. Feed ciphertext to the [Frequency Analyzer](/tools/frequency-analyzer) to see the distribution and start guessing the mapping. This cracks Caesar, Atbash, and full monoalphabetic substitution.
+
+**Brute force.** When the keyspace is tiny — 25 Caesar shifts, 256 single-byte XOR keys — just try them all and pick the output that reads like language. The Caesar tool's brute-force view does this in one screen.
+
+**Index of Coincidence (IoC).** Vigenère defeats simple frequency analysis by using several alphabets at once. The IoC measures how likely two random letters in a text are to match. English text sits near 0.067; random text near 0.038. A _low_ IoC signals a polyalphabetic cipher, and you can use it to recover the key length — the [Frequency Analyzer](/tools/frequency-analyzer) reports IoC for you.
+
+**Kasiski examination.** The classic attack on Vigenère: find repeated sequences in the ciphertext and measure the distances between them. The key length tends to be a common factor of those distances. Once you know the key length, you split the ciphertext into that many columns, each of which is a _single Caesar shift_ — and frequency analysis cracks each column independently.
+
+<Callout type="tip" title="A practical attack order">
+  When you face an unknown classical cipher, work down this checklist: (1) Is it
+  just shifted? Try Caesar brute force. (2) Does a single-letter frequency
+  profile match English? It is monoalphabetic — solve by substitution. (3) Is
+  the IoC low/flat? It is polyalphabetic — use Kasiski to find the key length,
+  then break each column as a Caesar. The [Frequency
+  Analyzer](/tools/frequency-analyzer) gives you the signals to decide.
+</Callout>
+
+## Why they are obsolete — and still worth learning
+
+Every classical cipher leaks information about its plaintext. Substitution preserves letter frequencies; short keys are brute-forceable; reused keys (especially with XOR) are catastrophic. Computers make these attacks instantaneous, so no classical cipher offers real security.
+
+<Callout type="danger" title="Never use these to protect real data">
+  Classical ciphers are for puzzles, history, and learning — not for anything
+  that matters. ROT13 and friends are obfuscation, not encryption. For genuine
+  confidentiality use a modern authenticated scheme like AES-GCM; see [Symmetric
+  vs Asymmetric Cryptography](/learn/symmetric-vs-asymmetric).
+</Callout>
+
+What they _do_ teach is invaluable: the mindset of finding and exploiting statistical patterns, the relationship between key length and security, and the danger of key reuse. Those lessons carry directly into understanding (and respecting) modern cryptography.
+
+<KeyTakeaways>
+  - Classical ciphers are built from **substitution** (change letters) and
+  **transposition** (rearrange them); modern ciphers combine many rounds of
+  both. - Caesar/ROT13/Atbash are keyless or tiny-keyspace and fall to **brute
+  force**; monoalphabetic substitution falls to **frequency analysis**. -
+  Vigenère resists single-letter frequency analysis but is broken by **index of
+  coincidence** plus **Kasiski examination** to find the key length. - **XOR**
+  with a short or reused key is equally vulnerable; key reuse is always fatal. -
+  These ciphers are great for CTFs and learning but offer **zero real-world
+  security** — use AES-GCM for actual confidentiality. - ForensiKit's Caesar,
+  Vigenère, XOR, and Frequency Analyzer tools let you encrypt, decrypt, and
+  cryptanalyze each one hands-on.
+</KeyTakeaways>

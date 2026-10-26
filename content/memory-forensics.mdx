@@ -1,0 +1,110 @@
+Memory forensics is the analysis of a system's volatile memory (RAM) to reveal what a machine was actually doing at the moment of capture. Because RAM holds the live, decrypted, running state of a system — things that never touch disk or are deliberately hidden from it — it is often the single richest source of evidence in an investigation.
+
+## Why RAM is gold
+
+The disk tells you what was stored; memory tells you what was _happening_. A RAM capture can contain:
+
+- **Encryption keys and passphrases.** Full-disk encryption, password managers, and TLS sessions all keep keys in memory while in use. Pull the key from RAM and a "locked" disk becomes readable. This alone justifies memory capture in many cases.
+- **Running processes and their command lines** — including malware that exists only in memory and was never written to disk.
+- **Network connections** — active and recent sockets, remote IPs and ports, revealing command-and-control channels or data exfiltration.
+- **Injected and unpacked code.** Packed malware decompresses itself in memory to run; code injected into legitimate processes lives only in RAM. The on-disk file may look benign while the in-memory version is malicious.
+- **Open files, clipboard contents, typed commands, and chat/browser fragments** that were never saved.
+
+<Callout type="note" title="Memory often beats the disk for live threats">
+  Modern malware increasingly runs "fileless" — staged in memory, injected into
+  trusted processes, or executed straight from a script interpreter. A clean
+  disk scan can completely miss it. Memory forensics is frequently the only way
+  to see what is truly executing on a compromised host.
+</Callout>
+
+## Order of volatility
+
+Evidence has a shelf life. The **order of volatility** (codified in RFC 3227) ranks data from most to least perishable so you collect the fragile things first:
+
+```text
+Most volatile  ->  least volatile
+1. CPU registers, caches
+2. RAM (running processes, network state, keys)
+3. Network state / routing tables / ARP cache
+4. Running processes & temporary files
+5. Disk (the file system)
+6. Remote logs & monitoring data
+7. Archival media / backups
+```
+
+The headline: **capture memory before you shut down or even unplug.** Powering off destroys RAM instantly, and on an encrypted machine it can lock away the disk forever. If a live system is in front of you and volatile evidence matters, memory comes first — then disk imaging, as covered in [Disk Imaging & Write Blockers](/learn/disk-imaging-and-write-blockers).
+
+## Capturing memory
+
+Acquisition means dumping the contents of RAM to a file on external media, using a tool small enough to disturb the system as little as possible. Common tools include WinPmem and MagnetRAMCapture on Windows, AVML and LiME on Linux, and built-in mechanisms on macOS. The capture itself slightly perturbs memory (the acquisition tool uses some RAM), which is unavoidable — you document it and move on.
+
+```bash
+# Illustrative Linux capture with AVML, writing to attached USB media
+sudo ./avml /media/usb/mem.lime
+
+# Record the digest immediately, exactly as you would for a disk image
+sha256sum /media/usb/mem.lime
+```
+
+Hash the dump the moment it lands, with the [File Hasher](/tools/file-hasher) or `sha256sum`, and log it in your [Chain of Custody](/learn/chain-of-custody) — a memory image is evidence like any other.
+
+<Callout type="warning" title="Authorized, deliberate, documented">
+  Capturing memory means running code on a live system you may not fully
+  control, and it touches deeply private data — keys, passwords, messages. Do it
+  only on systems you own or are explicitly authorized to investigate, decide
+  your power and capture order *before* you touch the machine, and document
+  every step.
+</Callout>
+
+## Analysis: the Volatility workflow
+
+The dominant open-source framework is **Volatility** (Volatility 3 is current; many references still show Volatility 2's `--profile` syntax). Volatility 2 needed you to specify the OS profile; Volatility 3 auto-detects the OS from symbol information, simplifying the workflow. The analysis typically walks through layers:
+
+- **Process listing** — enumerate running processes, parent/child relationships, and command lines. Cross-referencing two different enumeration methods exposes processes hidden by rootkits.
+- **Loaded modules / DLLs** — what libraries each process loaded; unexpected DLLs in a trusted process suggest injection.
+- **Network artifacts** — active and recent connections with remote endpoints.
+- **Injected code & malware** — scan process memory for executable regions that don't belong, dump them, and analyze.
+- **Registry, credentials, and command history** parsed straight from memory structures.
+
+```bash
+# Volatility 2 style (explicit profile)
+volatility -f mem.raw --profile=Win10x64_19041 pslist
+volatility -f mem.raw --profile=Win10x64_19041 netscan
+volatility -f mem.raw --profile=Win10x64_19041 malfind
+
+# Volatility 3 style (auto-detected OS, plugin namespaces)
+vol -f mem.raw windows.pslist
+vol -f mem.raw windows.netscan
+vol -f mem.raw windows.malfind
+```
+
+A natural next move is to dump a suspicious process or injected region and triage it like any binary. Pull readable text with the [String Extractor](/tools/string-extractor) to find URLs, IPs, and commands, and run the [Entropy Analyzer](/tools/entropy-analyzer) over the dump — high, uniform entropy points to packed or encrypted payloads, while structured regions reveal code and config.
+
+<Callout type="tip" title="Strings first">
+  Before deep plugin work, a strings pass over the whole dump is fast and
+  revealing — it surfaces command-and-control URLs, file paths, error messages,
+  and even plaintext passwords that were sitting in a buffer. It is the cheapest
+  high-value step in memory analysis.
+</Callout>
+
+## Challenges
+
+Memory forensics is powerful but fiddly:
+
+- **Volatility (the property, not the tool).** RAM changes constantly. Two captures seconds apart differ, and the act of capturing alters memory. Findings are a snapshot, not a continuous record.
+- **Smearing.** On a busy system, a capture takes time, and memory keeps changing _during_ the dump. The result can be internally inconsistent — pointers in one region referencing memory that already changed in another — which breaks some structure parsing. Faster capture and, where available, atomic/hardware-assisted methods reduce smear.
+- **OS and version sensitivity.** Memory structures shift between OS builds; analysis depends on matching symbols/profiles to the exact version captured.
+- **Anti-forensics.** Malware can hide processes, unlink itself from kernel lists, or detect acquisition tools — which is exactly why analysts cross-check multiple enumeration techniques rather than trusting one list.
+
+If you are new to the broader picture, the [What Is Digital Forensics?](/learn/what-is-digital-forensics) overview shows where memory analysis fits among the other branches.
+
+<KeyTakeaways>
+
+- RAM holds live state — keys, running and fileless malware, network connections, injected code — that never reaches the disk.
+- Follow the order of volatility: capture memory before shutdown, especially on encrypted systems where power-off can lock the disk forever.
+- Acquire with a lightweight tool, hash the dump immediately, and treat it as evidence under chain of custody.
+- Volatility is the standard analysis framework; v3 auto-detects the OS while v2 needs an explicit profile.
+- A strings-and-entropy triage pass quickly surfaces C2 URLs, credentials, and packed payloads before deep plugin analysis.
+- Watch for volatility and smearing during capture, OS-version sensitivity, and anti-forensic process hiding — cross-check multiple methods.
+
+</KeyTakeaways>

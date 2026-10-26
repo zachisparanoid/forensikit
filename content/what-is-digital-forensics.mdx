@@ -1,0 +1,100 @@
+Digital forensics is the disciplined practice of identifying, preserving, analyzing, and presenting electronically stored information so that it can answer investigative questions and, where needed, stand up to scrutiny in court. At its core it is about producing reliable, repeatable answers from data that is fragile, easy to alter, and often hostile to the person trying to read it.
+
+## What "forensics" really means here
+
+The word _forensic_ comes from the Latin _forensis_, "of the forum" — that is, suitable for public, adversarial argument. That framing matters. A forensic finding is not just "what the data probably says"; it is a conclusion you can defend against someone actively trying to discredit it. Everything in the discipline — hashing, documentation, write protection, repeatable tooling — exists to make findings durable under challenge.
+
+Digital forensics applies that mindset to computers, phones, servers, networks, and the cloud. The data involved is uniquely tricky: a single careless double-click can change a file's last-accessed time, booting a suspect machine rewrites dozens of system files, and copying data the wrong way silently drops hidden or deleted content. The methodology compensates for that fragility.
+
+<Callout type="warning" title="Authorized use only">
+  Forensic techniques can expose private data, bypass weak protections, and
+  access deleted material. Only practice on systems and data you own or have
+  explicit written authorization to examine. ForensiKit is built for education,
+  lab work, incident response on your own estate, and capture-the-flag (CTF)
+  practice — not for accessing anyone else's data without consent.
+</Callout>
+
+## The forensic process
+
+Methodologies vary by jurisdiction and standards body (NIST SP 800-86, ISO/IEC 27037, ACPO), but they converge on the same stages. Think of it as a pipeline where each stage protects the next.
+
+### 1. Identification
+
+Before touching anything, you scope the investigation. What question are you answering? Which devices, accounts, and data sources are in play — laptops, phones, a NAS, cloud tenants, log servers? Identification also means recognizing _volatile_ sources (running memory, open network connections) that vanish on shutdown and must be prioritized.
+
+### 2. Preservation
+
+The goal of preservation is to freeze evidence in the exact state it was found, and to prove it stayed that way. This is where write blockers, careful power decisions (pull the plug vs. graceful shutdown), and the [Chain of Custody](/learn/chain-of-custody) come in. Preservation failures are the most common reason evidence gets thrown out.
+
+### 3. Collection / acquisition
+
+Acquisition is the act of making a forensic copy. For storage media that means a bit-for-bit image; for memory it means a RAM capture; for cloud it might mean an API export. The original is set aside and all analysis happens on copies. See [Disk Imaging & Write Blockers](/learn/disk-imaging-and-write-blockers).
+
+### 4. Examination
+
+Examination is the technical, largely mechanical work of making data readable: mounting images, parsing file systems, extracting artifacts, recovering deleted files, decoding formats. It surfaces _what is there_ without yet drawing conclusions.
+
+### 5. Analysis
+
+Analysis is interpretation. You correlate timestamps into a timeline, link a user account to an action, reconstruct a sequence of events, and test alternative explanations. Good analysis is hypothesis-driven: you actively look for evidence that would _disprove_ your theory, not just confirm it.
+
+### 6. Reporting / presentation
+
+Finally you communicate findings to a non-technical audience — a manager, a lawyer, a jury — in plain, accurate language, with your methodology documented well enough that another examiner could reproduce it.
+
+<Callout type="tip" title="Reproducibility is the whole game">
+  A finding nobody else can reproduce is an opinion, not evidence. Record your
+  tool versions, exact commands, input hashes, and output hashes. A second
+  examiner following your notes on the same image should reach the same result,
+  byte for byte.
+</Callout>
+
+## Branches of the discipline
+
+Digital forensics is broad enough that practitioners specialize:
+
+- **Computer / disk forensics** — hard drives and SSDs: file systems, deleted-file recovery, user artifacts, browser history. See [File Systems: NTFS, ext4 & APFS](/learn/file-systems-ntfs-ext4-apfs).
+- **Mobile forensics** — iOS and Android, with heavy encryption, app databases, and location history.
+- **Network forensics** — traffic on the wire and flow logs, reconstructing sessions and exfiltration. See [Network Forensics](/learn/network-forensics).
+- **Memory forensics** — the contents of RAM: running processes, injected code, even encryption keys. See [Memory Forensics](/learn/memory-forensics).
+- **Cloud forensics** — SaaS audit logs, object storage, and virtual machines, where you rarely control the underlying hardware.
+
+These overlap constantly. A ransomware case might pull memory from a live host, packet captures from the perimeter, and disk images from infected endpoints, then stitch them into one timeline.
+
+## Locard's exchange principle
+
+A century ago, forensic scientist Edmond Locard articulated a principle for physical crime scenes: _every contact leaves a trace_. The perpetrator brings something to the scene and takes something away. The digital analogue is just as powerful — actions on a system leave artifacts, often in places the actor never considered.
+
+Open a document and you touch last-accessed times, jump lists, and recent-files registries. Plug in a USB stick and the OS logs its serial number. Visit a website and you seed DNS caches, browser history, and TLS session records. The investigator's job is to find those traces and read them honestly.
+
+```text
+Action by the actor          ->  Trace left behind
+---------------------------      ----------------------------------
+Plugged in a USB drive       ->  USB device serial in system logs
+Opened a Word document       ->  Recent-files list, jump lists, MRU
+Visited a website            ->  Browser history, DNS cache, cookies
+Deleted a file               ->  Filename in MFT/journal; data in slack
+Ran a program                ->  Prefetch (Windows), shimcache, logs
+```
+
+## Who uses digital forensics
+
+- **Incident responders (DFIR)** investigating breaches, ransomware, and insider threats — usually under time pressure, often on live systems.
+- **Law enforcement and prosecutors** building criminal cases where evidence must survive defense challenges.
+- **E-discovery and corporate legal teams** preserving and producing relevant data for litigation.
+- **CTF players and students** sharpening skills on intentionally crafted puzzles — a low-stakes way to learn real techniques.
+
+## Where to go from here
+
+If you are new, the most load-bearing concepts are integrity and provenance. Start by understanding how cryptographic hashing proves data hasn't changed using the [Hash Generator](/tools/hash-generator) and [File Hasher](/tools/file-hasher), then read [Chain of Custody](/learn/chain-of-custody) to see how that integrity is documented end to end. From there, the acquisition and file-system guides give you the practical backbone for everything else.
+
+<KeyTakeaways>
+
+- Digital forensics produces reliable, repeatable answers from fragile electronic evidence that must withstand adversarial challenge.
+- The process flows through identification, preservation, acquisition, examination, analysis, and reporting — each stage protecting the integrity of the next.
+- Locard's principle applies digitally: every action leaves traces, often where the actor never expected.
+- The field spans computer, mobile, network, memory, and cloud specializations that frequently combine in a single case.
+- Reproducibility — documented tools, commands, and hashes — is what separates evidence from opinion.
+- Always work within lawful, authorized boundaries; these techniques are powerful and easy to misuse.
+
+</KeyTakeaways>

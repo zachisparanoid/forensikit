@@ -1,0 +1,95 @@
+A file system is the bookkeeping layer that turns a flat sea of disk sectors into named files, folders, permissions, and timestamps. For an investigator, that bookkeeping _is_ the evidence: where data lives, what was deleted, who touched what, and when — all of it is recorded in file-system metadata long after a user thinks the trail is gone.
+
+## What a file system actually does
+
+Underneath every file system are two jobs. First, it tracks **allocation**: which clusters or blocks hold real data and which are free. Second, it stores **metadata**: each file's name, size, location on disk, ownership, permissions, and timestamps. When you delete a file, most file systems do not erase its data — they simply mark its space as free and unlink its name. The bytes remain until something overwrites them, which is exactly why file recovery and [File Carving & Signatures](/learn/file-carving-and-signatures) work.
+
+Two recurring concepts matter across every file system:
+
+- **Slack space** — files rarely fill their last cluster exactly. The leftover bytes between the end of a file and the end of its cluster can hold fragments of a _previous_, deleted file. That is **file slack**, a classic hiding and recovery spot.
+- **Unallocated space** — clusters marked free that still contain old data. The home of deleted files until overwritten.
+
+<Callout type="tip" title="Timestamps are evidence, but they lie easily">
+  Timestamps drive timelines, but they are trivially altered by tools
+  (anti-forensics "timestomping"), reset by file copies, and stored in different
+  epochs per file system. Treat any single timestamp as a lead, not a fact —
+  corroborate it against logs, journals, and other artifacts. ForensiKit's
+  [Timestamp Converter](/tools/timestamp-converter) decodes Windows FILETIME,
+  WebKit, and Unix epochs so you can compare values across sources consistently.
+</Callout>
+
+## NTFS (Windows)
+
+NTFS is the default file system on modern Windows. Its defining structure is the **Master File Table (MFT)** — a database with one record (typically 1 KB) for _every_ file and directory on the volume, including the metadata files that describe the file system itself.
+
+- **The MFT record** holds a file's attributes: name, timestamps, security info, and either the data itself (for tiny "resident" files that fit inside the ~1 KB record) or pointers to the clusters holding it ("non-resident"). Because deleting a file only flags its MFT record as unused, recently deleted files often remain fully described in the MFT.
+- **`$`-prefixed metafiles** are NTFS's internal records. Key ones for investigators include `$MFT` itself, `$LogFile` and `$UsnJrnl` (change journals that log file operations — gold for reconstructing activity), `$Bitmap` (cluster allocation map), and `$Boot`.
+- **Alternate Data Streams (ADS)** let a file carry extra, hidden data streams beyond its main content. Windows uses ADS legitimately (the "downloaded from the internet" Zone.Identifier tag), but it is also a classic malware and data-hiding trick — content stored in an ADS does not show up in a normal directory listing.
+- **MACB timestamps** — NTFS keeps four times per file: **M**odified, **A**ccessed, **C**hanged (MFT record change), and **B**orn (creation). NTFS stores them twice, in the `$STANDARD_INFORMATION` and `$FILE_NAME` attributes, and discrepancies between the two sets are a well-known tell for timestomping.
+
+<Callout
+  type="note"
+  title="MACB: the same four letters, different meanings per OS"
+>
+  "MACB" appears in NTFS, ext4, and APFS analysis, but the letters do not map
+  cleanly across them. Notably the "C" is *Changed* (metadata change) on
+  Unix-like systems, while NTFS calls its creation time "Born." Tools that
+  normalize timelines (like the Sleuth Kit's body-file format) line these up for
+  you — but know which file system you are reading before you trust a label.
+</Callout>
+
+## ext4 (Linux)
+
+ext4 is the workhorse Linux file system. Its model is built around **inodes**.
+
+- **Inodes** are fixed-size structures, one per file, holding metadata (size, owner, permissions, timestamps, block pointers) — but notably _not_ the filename. Names live in directory entries that point to inode numbers. Delete a file and the directory entry is removed and the inode freed; on ext4 the inode's block pointers are typically zeroed, which makes metadata-based recovery harder than on NTFS and pushes investigators toward carving.
+- **The superblock** is the file system's master record: total size, block size, inode count, mount state, and feature flags. ext4 keeps backup copies of the superblock at known offsets, which can rescue a volume whose primary superblock is damaged.
+- **Journaling** records pending changes to a dedicated journal _before_ committing them, so a crash mid-write leaves the file system recoverable rather than corrupt. For investigators the journal is a bonus: it can contain recent metadata states and traces of operations that the live file system has already moved past.
+- **Timestamps** — ext4 stores atime (access), mtime (modify), ctime (inode change), and, unlike older ext versions, crtime (creation), with nanosecond precision. Many systems mount with `relatime` to reduce access-time writes, so atime is often stale by design — a detail that matters when you reason about "last opened."
+
+```text
+File system   Per-file structure   Filename lives in     Journaling   Native creation time
+-----------   ------------------   -------------------   ----------   --------------------
+NTFS          MFT record           MFT ($FILE_NAME)      yes ($LogFile)  yes (Born)
+ext4          inode                directory entry       yes (journal)   yes (crtime)
+APFS          inode (file record)  directory record      copy-on-write   yes
+```
+
+## APFS (Apple)
+
+APFS is the file system across modern macOS, iOS, and iPadOS, designed for flash storage and built around a few powerful ideas.
+
+- **Containers and volumes** — an APFS **container** occupies a partition and can hold multiple **volumes** that share the container's free space dynamically. A single Mac disk commonly has separate volumes for the system, user data, and recovery inside one container — so "the disk" is really a small ecosystem to enumerate.
+- **Copy-on-write (CoW)** — APFS never overwrites live data in place. When a file changes, it writes the new data to fresh blocks and updates pointers, leaving the old blocks intact until reclaimed. This is great for reliability and snapshots, and it means older versions of data can linger on disk.
+- **Snapshots** — APFS can capture a read-only, point-in-time image of a volume with almost no space cost (thanks to CoW). Snapshots — including Time Machine local snapshots — can preserve deleted files and prior states, making them a rich and frequently overlooked evidence source.
+- **Encryption** — APFS supports native, per-file and per-volume encryption (FileVault on macOS; hardware-backed protection on iOS). This is the central hurdle in Apple forensics: without the key or an unlocked, running device, the data is unreadable. It is a prime reason for live acquisition — see [Disk Imaging & Write Blockers](/learn/disk-imaging-and-write-blockers).
+
+## Artifacts investigators care about
+
+Across all three file systems, the recurring questions are the same:
+
+- **Deleted-file remnants** in MFT records, freed inodes, journals, snapshots, and unallocated space.
+- **Slack space** carrying fragments of overwritten files.
+- **Change journals and logs** — NTFS `$UsnJrnl`/`$LogFile`, ext4's journal, APFS snapshots — that reconstruct _what happened and when_, often surviving longer than the live file.
+- **Hidden data** — NTFS Alternate Data Streams, unused metadata fields, and partition gaps.
+
+A practical first pass on any image is to open it in a [Hex Inspector](/tools/hex-inspector) to read structures by hand, run a [String Extractor](/tools/string-extractor) over unallocated regions to surface readable fragments, and use the [Entropy Analyzer](/tools/entropy-analyzer) to spot encrypted or compressed blobs hiding in otherwise empty space. Always work on a verified image, not the original.
+
+<Callout type="warning" title='Encryption and CoW change what "deleted" means'>
+  On an encrypted APFS volume you may be staring at high-entropy noise until the
+  key is supplied. And copy-on-write means a file you think you overwrote may
+  still exist in old blocks or a snapshot. Conversely, SSD TRIM can wipe deleted
+  blocks fast. Never promise recovery before you know the media type, the
+  encryption state, and whether snapshots exist.
+</Callout>
+
+<KeyTakeaways>
+
+- A file system's metadata — allocation maps, names, timestamps — is itself primary evidence, and deletion usually unlinks names without erasing data.
+- NTFS centers on the MFT and `$`-metafiles; watch for Alternate Data Streams and dual MACB timestamps that expose timestomping.
+- ext4 uses inodes plus a superblock and journal; freed inodes are often zeroed, so carving matters more for Linux recovery.
+- APFS brings containers, copy-on-write, cheap snapshots, and strong encryption — snapshots are a rich evidence source, encryption is the main hurdle.
+- Slack space and unallocated space hold remnants of deleted files across all three systems.
+- Timestamps differ by epoch and meaning per file system and are easily altered — corroborate, normalize, and never trust one in isolation.
+
+</KeyTakeaways>

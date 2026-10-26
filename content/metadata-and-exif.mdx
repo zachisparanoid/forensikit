@@ -1,0 +1,94 @@
+Metadata is data about data — the quiet record of who created a file, when, where, and with what. It rarely shows up when you open a photo or document, yet it can reveal more about a person than the visible content ever does, which makes it equally valuable to investigators and dangerous to privacy.
+
+## What metadata is
+
+Every digital file can carry descriptive information alongside its actual content. A text document tracks its author and edit history; a photo records the camera and exposure; a PDF logs the software that produced it. Some of this is generated automatically by the device or application, and most people never realize it is there. That invisibility is exactly what makes metadata so revealing.
+
+## EXIF, IPTC, and XMP in images
+
+Photographs are the richest everyday source. Three standards commonly coexist inside a single image:
+
+- **EXIF (Exchangeable Image File Format)** — written by the camera or phone. It captures the make and model, lens, exposure settings, orientation, the original date and time, and — critically — **GPS coordinates** if location services were on.
+- **IPTC** — a publishing standard for captions, credits, keywords, and copyright, common in journalism and stock photography.
+- **XMP (Extensible Metadata Platform)** — Adobe's XML-based format that editors use to store edit history, ratings, and custom fields.
+
+You can read all three, and strip them, in the [EXIF / Metadata Viewer](/tools/exif-viewer).
+
+```bash
+# Dump every metadata field from an image
+exiftool image.jpg
+
+# Pull just the GPS block (often the most sensitive part)
+exiftool -gps:all -n image.jpg
+
+# Sort fields by their metadata group (EXIF, IPTC, XMP, ...)
+exiftool -G1 -a image.jpg
+```
+
+<Callout type="warning" title="Geotags leak your location">
+  A single photo's EXIF GPS tag can pin down the exact spot — and often the
+  exact second — it was taken. People have been deanonymized, and homes located,
+  from images shared online with geotags intact. Before posting anything
+  publicly, check for and remove location metadata.
+</Callout>
+
+## Document metadata
+
+Office documents and PDFs carry their own trail: author and last-modified-by names, organization, creation and revision timestamps, total edit time, the application and version used, and sometimes the printer or file path. Word and similar formats can even retain **tracked changes and earlier revisions** that the author thought were deleted. There is a long history of redacted documents being undone because the hidden text or revision history was still embedded in the file.
+
+<Callout type="note" title="Redaction is not deletion">
+  Drawing a black box over text, or hiding a layer, does not remove the
+  underlying data — it is still in the file's structure and metadata. True
+  redaction means deleting the content and flattening or rewriting the document
+  so nothing recoverable remains.
+</Callout>
+
+## How metadata aids investigations
+
+For an analyst, metadata is corroboration. It can:
+
+- **Establish a timeline** — creation, modification, and access timestamps help order events. (Watch for time-zone and epoch quirks; the [Timestamp Converter](/tools/timestamp-converter) translates the odd formats.)
+- **Place a device and person** — GPS tags and camera serial numbers can tie a photo to a specific phone and location.
+- **Attribute authorship** — author fields and software fingerprints can link disparate files to one person or machine.
+- **Expose manipulation** — inconsistent or missing metadata (a photo "taken" before its camera model existed, EXIF that does not match the visible content) is a classic sign of tampering or fabrication.
+
+Because metadata is so probative, preserve it carefully: hash files on intake (see [Hashing & Integrity](/learn/hashing-and-integrity)) and never let your own tools rewrite timestamps on the originals.
+
+## The privacy flip side
+
+The same fields that help investigators leak ordinary people's private lives. Photos posted to forums, dating profiles, or marketplaces can disclose home addresses through geotags; document properties can reveal a real name behind a pseudonymous leak; consistent camera serials can link "anonymous" accounts to one owner. Awareness cuts both ways — understanding what metadata exposes is the first step to controlling it.
+
+## Stripping metadata
+
+When you need to share a file without its baggage, remove the metadata first. Many platforms strip EXIF on upload, but never assume so — verify.
+
+```bash
+# Strip ALL metadata, overwriting the file in place
+exiftool -all= image.jpg
+
+# Strip metadata but keep a backup of the original
+exiftool -all= -overwrite_original_in_place image_copy.jpg
+```
+
+The [EXIF / Metadata Viewer](/tools/exif-viewer) offers a one-click "strip and download a clean copy" path entirely in your browser, so the file never leaves your machine.
+
+<Callout type="tip" title="Hidden characters carry metadata too">
+  Metadata is not only in formal fields. Text can hide information in zero-width
+  and other invisible Unicode characters — sometimes used as deliberate
+  "fingerprints" to trace who leaked a document. The [Character
+  Inspector](/tools/character-inspector) flags these confusable and invisible
+  code points so nothing slips past you.
+</Callout>
+
+<KeyTakeaways>
+  - Metadata is the invisible record of who, when, where, and with what —
+  frequently more revealing than a file's visible content. - Images carry
+  **EXIF, IPTC, and XMP**; EXIF **GPS geotags** are the highest privacy risk. -
+  Documents retain authors, timestamps, and even deleted **revisions** —
+  redaction by black box does not remove the underlying data. - Investigators
+  use metadata to build timelines, attribute authorship, place devices, and
+  detect tampering. - Strip metadata before sharing (`exiftool -all=`), and
+  verify it is actually gone rather than trusting the platform. - Hidden Unicode
+  characters can act as metadata-like fingerprints — inspect text as well as
+  files.
+</KeyTakeaways>

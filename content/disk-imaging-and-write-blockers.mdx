@@ -1,0 +1,107 @@
+Disk imaging is the act of creating an exact, verifiable copy of storage media so all analysis happens on the copy, never the original. Paired with write blocking and hash verification, it is the foundation that makes everything downstream — file recovery, carving, timeline analysis — trustworthy.
+
+## Logical vs. physical acquisition
+
+The first decision is _how much_ to copy, and it changes what you can recover.
+
+A **logical acquisition** copies the files and folders the file system currently presents — the active, allocated data. It is fast and selective, useful when you only need specific user files or cannot take a full image. But it skips everything the file system has "forgotten": deleted files still sitting in unallocated space, slack space, and unused metadata.
+
+A **physical acquisition** copies the device sector by sector, from the first byte to the last, regardless of what the file system claims. This bit-for-bit image captures deleted data, partition gaps, file slack, and hidden areas — the raw material for [File Carving & Signatures](/learn/file-carving-and-signatures). When in doubt, and when the situation allows, physical acquisition is the forensically sound default.
+
+<Callout type="note" title='SSDs complicate the "capture everything" ideal'>
+  On spinning disks, deleted data lingers until overwritten. On SSDs, the
+  **TRIM** command and wear-leveling let the drive's controller erase deleted
+  blocks on its own schedule — sometimes within seconds — and remap data
+  invisibly. A physical image still captures whatever remains, but you cannot
+  assume deleted SSD content is recoverable the way it often is on a hard drive.
+  Acquire promptly and document the media type.
+</Callout>
+
+## What "bit-for-bit" buys you
+
+A true forensic image is identical to the source down to every bit. That completeness is what lets you:
+
+- recover deleted files whose data still occupies unallocated sectors,
+- read **file slack** — leftover bytes between the end of a file and the end of its last cluster,
+- inspect partition gaps and unpartitioned space where data can be hidden, and
+- prove faithfulness by hashing: if the image hashes equal the source hash, the copy is exact.
+
+## Image formats
+
+Different formats trade off simplicity, compression, and embedded metadata:
+
+- **Raw / `dd` (often `.dd` or `.raw` or split `.001`)** — a plain byte-for-byte dump with no container. Maximally compatible; every tool reads it. Downside: no built-in compression or metadata, so it is as large as the source.
+- **E01 / EWF (Expert Witness Format)** — the long-standing forensic standard. Compresses data, stores case metadata (examiner, notes, acquisition time), and embeds checksums for every chunk so corruption is detected on read. Can be split into fixed-size segments.
+- **AFF4** — a modern open format designed for very large and even sparse/cloud images, with strong metadata and efficient handling of huge captures.
+
+```text
+Format   Compression   Embedded metadata   Integrity check     Best for
+-------   -----------   -----------------   -----------------   ---------------------
+raw/dd   no            no                  external hash only  max compatibility
+E01      yes           yes (case info)     per-chunk CRC       courtroom casework
+AFF4     yes           yes                 per-block hashes    very large / cloud
+```
+
+## Write blockers: hardware vs. software
+
+An operating system writes to a disk the moment it is connected — updating access times, mounting volumes, replaying journals. A **write blocker** prevents that, allowing read commands through while blocking every write.
+
+- **Hardware write blockers** are physical devices the evidence drive plugs into; the workstation only ever sees a read path. They are the gold standard because the protection does not depend on the host OS behaving correctly.
+- **Software write blockers** are drivers or OS settings (for example, a kernel set to mount removable media read-only) that intercept writes. They are convenient but only as trustworthy as the configuration — one misstep and the OS writes to your evidence.
+
+<Callout type="warning" title="Verify the blocker, then verify the hash">
+  Never assume a write blocker is working. Hash the source through the blocker,
+  perform the acquisition, then hash again — the source digest must be
+  unchanged. A write that slipped through will show up as a hash mismatch, and
+  you want to discover that in the lab, not in the witness box.
+</Callout>
+
+## Acquiring with `dd` (illustrative)
+
+`dd` is the classic raw-imaging tool. Forensic teams more often use hardened variants like `dcfldd` or `dc3dd` (which hash on the fly and log progress), or GUI imagers, but `dd` shows the mechanics clearly.
+
+```bash
+# Identify the evidence device (do this through a write blocker)
+lsblk
+
+# Bit-for-bit image: large block size for speed; keep going past read
+# errors, and pad unreadable sectors with zeros so offsets stay aligned
+dd if=/dev/sdb of=evidence.dd bs=4M conv=noerror,sync status=progress
+
+# Verify: the image must hash identically to the source
+sha256sum /dev/sdb
+sha256sum evidence.dd
+```
+
+The `conv=noerror,sync` part is important: `noerror` keeps the copy running when it hits a bad sector instead of aborting, and `sync` pads each unreadable block with zeros so every later byte stays at its correct offset. Without `sync`, a single skipped error would shift the rest of the image and break every downstream offset.
+
+You can confirm and compare digests in the browser with the [File Hasher](/tools/file-hasher) or [Hash Generator](/tools/hash-generator), and record them in your [Chain of Custody](/learn/chain-of-custody). Once imaged, peek at raw bytes with the [Hex Inspector](/tools/hex-inspector).
+
+## Handling bad sectors
+
+Failing drives are common, and a forensic imager must cope gracefully. The goals are: capture every readable sector, preserve correct offsets for the unreadable ones, and document exactly what could not be read. Tools like `ddrescue` are purpose-built for this — they map the drive, grab the easy reads first, then make repeated passes at the damaged regions, logging every gap. The cardinal rule is to never let a read error silently shorten or shift the image.
+
+## Live vs. dead acquisition
+
+- **Dead (static) acquisition** is performed with the system powered off and the drive removed or write-blocked. It is the cleanest approach: nothing on the source can change while you image it.
+- **Live acquisition** is performed on a running system. You accept that the data is shifting under you, but you gain access to things a dead image cannot give: the contents of RAM, decrypted volumes that are currently unlocked, and active network connections.
+
+The live path is essential when the disk is **full-disk encrypted** and you only have the keys (or an unlocked state) while the machine runs, or when volatile evidence matters. In those cases you typically capture memory _first_ — see [Memory Forensics](/learn/memory-forensics) — because RAM is the most perishable evidence, then image the disk. Whatever you choose, document the decision and its rationale: a defensible reason for a live acquisition is far stronger than an unexplained one.
+
+<Callout type="tip" title="Encryption changes the order of operations">
+  If a laptop arrives powered-on and the encrypted volume is unlocked, pulling
+  the plug may lock the data behind a key you do not have. In that situation a
+  live capture of memory and the decrypted disk can be the only way to ever read
+  the evidence. Plan the power decision before you touch the machine.
+</Callout>
+
+<KeyTakeaways>
+
+- Image first, analyze the copy: a verified forensic image protects the original and lets you re-image if a working copy is damaged.
+- Physical (bit-for-bit) acquisition captures deleted data, slack, and hidden areas that logical acquisition misses.
+- Choose a format to fit the job — raw/dd for compatibility, E01 for casework metadata and integrity, AFF4 for very large images.
+- Write blockers (hardware preferred) stop the OS from altering evidence; always confirm with before-and-after source hashes.
+- Use `conv=noerror,sync` or a tool like ddrescue so bad sectors do not abort or misalign the image, and document every unreadable region.
+- Pick live vs. dead acquisition deliberately — encryption and volatile memory often force a live capture, captured in the right order.
+
+</KeyTakeaways>

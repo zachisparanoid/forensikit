@@ -1,0 +1,103 @@
+Network forensics is the capture, recording, and analysis of network traffic and logs to reconstruct what happened across the wire — who talked to whom, when, over which protocols, and often _what_ was actually transferred. Unlike disk forensics, where the evidence sits still and waits, network evidence is fleeting: if you weren't recording, the packets are gone.
+
+## Two ways to see the network
+
+There are two complementary vantage points, and serious investigations use both.
+
+**Full packet capture (PCAP)** records every byte of every packet — headers _and_ payloads. It is the highest-fidelity source: you can reconstruct entire conversations, extract transferred files, and read cleartext credentials. The cost is volume; capturing a busy link produces enormous files, so full capture is usually targeted or kept in short rolling windows.
+
+**Flow and log analysis** records _metadata about_ connections rather than their contents — source and destination IPs and ports, protocol, byte and packet counts, timestamps. **NetFlow**, IPFIX, and firewall/proxy/DNS logs fall here. Flow data is tiny by comparison, so organizations retain it far longer. You lose payload contents but keep the who/when/how-much, which is often enough to detect exfiltration, beaconing, or lateral movement and to scope an incident.
+
+<Callout type="note" title="Flow data scales; packet capture goes deep">
+  A useful mental model: flow/log data is the phone bill (who called whom, when,
+  for how long) and full PCAP is the wiretap (the actual conversation). You can
+  afford to keep phone bills for months and wiretaps only briefly — so
+  investigations often start in flow/logs to find *where* to look, then dive
+  into any PCAP that covers that window.
+</Callout>
+
+## PCAP basics
+
+A PCAP file is an ordered list of captured packets, each stamped with a capture time and the raw bytes seen on the wire. Tools like Wireshark (GUI) and tshark/tcpdump (command line) parse those bytes layer by layer — Ethernet, then IP, then TCP/UDP, then the application protocol — so you can filter, follow a single TCP stream, and export objects.
+
+```bash
+# Capture from an interface to a file (do this only on networks you own/are authorized to monitor)
+sudo tcpdump -i eth0 -w capture.pcap
+
+# Read it back and filter for plaintext HTTP
+tshark -r capture.pcap -Y http
+
+# Pull out DNS queries to see what names a host resolved
+tshark -r capture.pcap -Y dns -T fields -e ip.src -e dns.qry.name
+
+# Follow a single TCP conversation by stream index
+tshark -r capture.pcap -q -z follow,tcp,ascii,0
+```
+
+To dissect raw captured bytes or extracted payloads outside a packet tool, ForensiKit's [Hex Inspector](/tools/hex-inspector) lets you read structures by offset, and the [String Extractor](/tools/string-extractor) surfaces readable text — handy for spotting hostnames, user agents, or credentials inside a payload. Any file you carve out of a stream can be type-checked with the [File Signature Identifier](/tools/file-signature-id), much like in [File Carving & Signatures](/learn/file-carving-and-signatures).
+
+## Protocols worth knowing
+
+Most analysis comes down to reading a handful of protocols fluently:
+
+- **DNS** — name resolution. Reveals which domains a host contacted, and is a common covert channel (DNS tunneling) for exfiltration.
+- **HTTP** — web traffic in cleartext: full URLs, headers, cookies, posted form data, and downloaded files are all readable.
+- **TLS/HTTPS** — encrypted web traffic. You can't read the payload, but the handshake still leaks the destination (SNI), certificate details, and timing.
+- **SMTP/IMAP/POP3** — email. Cleartext variants expose entire messages and attachments.
+- **SMB** — Windows file sharing, central to lateral movement and ransomware spread.
+- **DHCP/ARP** — tie IP addresses to specific machines (MAC addresses) at a given time, which is essential for attribution.
+
+## What you can reconstruct
+
+From full packet capture, an analyst can rebuild a great deal:
+
+- **Sessions and timelines** — follow each TCP/UDP conversation end to end and order events precisely.
+- **Transferred files** — carve images, documents, and malware straight out of HTTP, SMB, or FTP streams ("file/object extraction").
+- **Credentials over cleartext** — Basic-auth headers, HTTP form posts, and plaintext mail logins expose usernames and passwords directly. This is a vivid reminder of why unencrypted protocols are dangerous.
+- **Indicators of compromise** — repeated beaconing to a remote IP, unusual ports, or large outbound transfers signaling exfiltration.
+
+<Callout
+  type="warning"
+  title="Capturing traffic is interception — get authorization"
+>
+  Recording network traffic means reading other people's communications, which
+  is legally regulated in most jurisdictions. Only capture on networks you own
+  or are explicitly authorized to monitor, mind privacy and wiretap law, and
+  document the scope. ForensiKit's tools are for analyzing captures you are
+  entitled to examine — lab traffic, your own network, or CTF data.
+</Callout>
+
+## IDS and NetFlow in practice
+
+Two technologies do the heavy lifting for continuous monitoring:
+
+- **Intrusion Detection Systems (IDS)** like Snort, Suricata, and Zeek (formerly Bro) watch live traffic and flag known-bad signatures or anomalous behavior. Zeek in particular turns raw traffic into rich, queryable logs (connections, DNS, HTTP, TLS, files) that are excellent forensic evidence even when no alert fired.
+- **NetFlow/IPFIX collectors** aggregate flow records across the network, giving long-retention visibility into who connected to whom and how much data moved — ideal for spotting slow exfiltration and mapping an intruder's path after the fact.
+
+In a real incident, these are usually where the investigation starts: an IDS alert or an odd flow points you at a host and a time window, and only then do you reach for any PCAP covering it.
+
+## The encryption challenge
+
+The biggest shift in network forensics is pervasive encryption. With most web and app traffic now TLS-protected, payloads are opaque on the wire. That doesn't make the network useless — it changes _what_ you read:
+
+- **Metadata still flows.** Destinations (via SNI, though encrypted SNI is spreading), certificate fingerprints, packet sizes, and timing patterns reveal a lot. **JA3/JA4** fingerprinting can identify the client software from how it negotiates TLS — sometimes spotting malware by its handshake alone.
+- **Endpoints become decisive.** When you can't read traffic in flight, evidence shifts to the hosts: the decrypted data lives in their memory and on their disks. This is where network forensics hands off to [Memory Forensics](/learn/memory-forensics), where TLS keys and decrypted buffers can still be recovered.
+- **Lawful decryption.** In authorized settings, traffic may be decrypted with logged session keys (an `SSLKEYLOGFILE`) or an enterprise inspection proxy — never by breaking the cryptography.
+
+<Callout type="tip" title="Let metadata point you to the host">
+  When payloads are encrypted, treat the network layer as a map, not a
+  transcript. Flow records and TLS metadata tell you *which* host to examine and
+  *when* — then pivot to that endpoint's memory and disk for the cleartext. The
+  wire narrows the search; the host closes the case.
+</Callout>
+
+<KeyTakeaways>
+
+- Network evidence is ephemeral — without recording in advance, the packets are gone; full PCAP gives depth, flow/logs give scale and retention.
+- PCAP analysis (Wireshark, tshark, tcpdump) reconstructs sessions, extracts transferred files, and reads cleartext credentials.
+- A handful of protocols — DNS, HTTP, TLS, SMB, DHCP/ARP — carry most of the investigative value, including IP-to-machine attribution.
+- IDS (Snort/Suricata/Zeek) and NetFlow/IPFIX provide continuous visibility and are usually where an investigation begins.
+- Encryption hides payloads but not metadata; SNI, certificates, sizes, timing, and JA3/JA4 fingerprints still reveal a great deal.
+- When traffic is encrypted, pivot to the endpoints — memory and disk hold the decrypted data — and only capture traffic you are authorized to monitor.
+
+</KeyTakeaways>

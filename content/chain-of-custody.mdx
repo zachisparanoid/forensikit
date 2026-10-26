@@ -1,0 +1,110 @@
+Chain of custody is the documented, unbroken record of who handled a piece of evidence, when, why, and what they did to it — from the moment it was seized to the moment it is presented. In digital forensics it is the difference between evidence that holds up and evidence a single skeptical question can demolish.
+
+## Why admissibility hinges on it
+
+When evidence is offered in a legal or disciplinary proceeding, the other side's first move is rarely to argue about _what the data says_. It is to argue that the data cannot be trusted at all: that it was altered, mixed up with another exhibit, or handled by someone who could have tampered with it. A clean chain of custody preempts those attacks. It demonstrates two things at once:
+
+1. **Provenance** — this is the same evidence that came from that source, not a substitute.
+2. **Integrity** — it has not changed since it was collected.
+
+If you cannot show both, a court can rule the evidence inadmissible regardless of how damning it is. The same logic applies inside a company: an HR or legal team that cannot prove an exhibit is authentic cannot safely act on it.
+
+<Callout type="warning" title="A break in the chain can be fatal">
+  Gaps are exploited mercilessly. An hour where nobody can say where a drive
+  was, a copy made without recording its hash, a storage cabinet anyone could
+  open — each is an opening for "we cannot be sure this is the original,
+  unaltered evidence." Once doubt is reasonable, the evidence may be excluded
+  entirely.
+</Callout>
+
+## What the documentation must capture
+
+Every time evidence changes hands or state, the record answers the classic questions. Think of it as a logbook entry for each event:
+
+- **Who** — the full name and role of the person taking and releasing custody.
+- **What** — a unique exhibit ID plus a precise description (make, model, serial number, capacity).
+- **When** — date and time, including time zone, of every transfer or action.
+- **Where** — the physical or logical location before and after (evidence locker shelf, lab bench, server path).
+- **Why** — the reason for the transfer or examination (acquisition, analysis, court transport).
+- **How** — the method and tools used, especially for any action that touches the data.
+
+```text
+Exhibit:  FK-2026-0014  (Samsung 870 EVO 1TB SSD, S/N S5Y2NX0R…)
+Acquired: 2026-06-14 09:42 UTC by A. Rivera (Examiner)
+SHA-256:  3a7bd3e2360a3d29eea436fcfb7e44c7… (source + image match)
+
+Date/Time (UTC)   From          To            Reason
+2026-06-14 09:42  Scene         A. Rivera     Seizure
+2026-06-14 11:05  A. Rivera     Evidence Rm   Secure storage (locker 7)
+2026-06-15 14:20  Evidence Rm   J. Okafor     Analysis on working copy
+2026-06-15 18:55  J. Okafor     Evidence Rm   Returned, sealed bag intact
+```
+
+## Hashing: proving integrity (fixity)
+
+Documentation proves _who_ touched evidence; cryptographic hashing proves the data _did not change_. A hash function reduces an entire drive image to a short fixed-length fingerprint (a digest). Change a single bit anywhere and the digest changes completely. This property is called **fixity**: a fixed value you can re-check at any time.
+
+The workflow is simple and non-negotiable:
+
+1. Hash the source media (or, with a write blocker, hash the image as it is created).
+2. Hash the forensic image you produced.
+3. Confirm the two digests match — this proves your copy is faithful.
+4. Re-hash before and after every analysis session to prove your handling changed nothing.
+
+```bash
+# Hash a forensic image and pin the result into your case notes
+sha256sum evidence.dd
+
+# Re-verify later by comparing against the recorded digest
+echo "3a7bd3e2360a3d29eea436fcfb7e44c7…  evidence.dd" | sha256sum --check
+```
+
+In ForensiKit you can do the equivalent in the browser: hash text or values with the [Hash Generator](/tools/hash-generator), and compute a chunked checksum of an actual file — with an expected-hash comparison — using the [File Hasher](/tools/file-hasher). Both run entirely client-side, so nothing leaves your machine.
+
+<Callout type="note" title="MD5, SHA-1, and why examiners often record both">
+  Older tooling defaults to MD5 or SHA-1, which are broken for *adversarial*
+  collision attacks — an attacker could craft two different files with the same
+  digest. For verifying that *your own* image matches its source, that weakness
+  rarely applies, which is why legacy digests still appear in reports. Best
+  practice today is SHA-256, and many examiners record two algorithms so a
+  single broken one can never explain away a match.
+</Callout>
+
+## Write-blocking: integrity at the source
+
+Hashing proves a change happened; a **write blocker** prevents it in the first place. Operating systems write to disks constantly — updating access times, mounting volumes, indexing content — often the instant a drive is connected. A write blocker sits between the evidence drive and your workstation and physically (hardware) or programmatically (software) refuses all write commands while allowing reads. Acquire through a write blocker and your source hash stays stable, which is exactly what your chain-of-custody record needs to show. There is more depth in [Disk Imaging & Write Blockers](/learn/disk-imaging-and-write-blockers).
+
+## Handling, storage, and transfer
+
+- **Seizure** — photograph the scene and the device in place, record serial numbers, and bag and tag each item with a unique exhibit ID.
+- **Sealing** — use tamper-evident bags and sign across the seal; any later opening is then visible and logged.
+- **Storage** — keep evidence in a controlled, access-logged location (a locked evidence room or safe). Limit who has keys, and record every entry.
+- **Working copies** — never analyze the original. Image it, verify the hash, and work only on the copy; if you corrupt a copy, you re-image from the original.
+- **Transfer** — every hand-off is a logged event, including transport to and from court.
+
+## Common mistakes
+
+- **Booting or browsing the original device.** This alters timestamps and system files instantly and is one of the most common, most damaging errors.
+- **Forgetting to hash at acquisition.** Without a baseline digest you can never prove the image is faithful or unchanged.
+- **Time-zone sloppiness.** Mixing local time and UTC across logs destroys timelines; record the zone every time.
+- **Shared, generic logins on the evidence workstation.** "Who did this?" must have a real answer.
+- **Gaps in the log.** Any window where custody is unaccounted for is an opening for the opposing side.
+- **Skipping re-verification.** Re-hash before and after each session so you can prove your own analysis changed nothing.
+
+<Callout type="tip" title="Document as you go, not after">
+  The most defensible notes are contemporaneous. Record the hash, the tool
+  version, and the exact command at the moment you run it. Reconstructing a
+  logbook from memory days later is both error-prone and easy for an opponent to
+  attack as unreliable.
+</Callout>
+
+<KeyTakeaways>
+
+- Chain of custody is the unbroken, documented record of who handled evidence, when, why, and how — and admissibility depends on it.
+- It must establish both provenance (this is the right evidence) and integrity (it has not changed).
+- Cryptographic hashing provides fixity; record digests at acquisition and re-verify before and after every analysis session.
+- Write blockers prevent the OS from altering evidence at the source, keeping your source hash stable.
+- Seal, store, and log evidence with tamper-evident handling and access-controlled storage; analyze only verified working copies.
+- The deadliest mistakes are booting the original, skipping acquisition hashes, and leaving gaps in the log.
+
+</KeyTakeaways>

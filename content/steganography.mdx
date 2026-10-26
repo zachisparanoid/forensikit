@@ -1,0 +1,80 @@
+Steganography is the practice of hiding the _existence_ of a message, not just its contents. Where encryption makes data unreadable, steganography makes it invisible — tucking a secret inside an ordinary-looking image, audio file, or document so that no one suspects anything is there at all.
+
+## Hiding versus encrypting
+
+The distinction is the whole point. Encryption produces obvious ciphertext: an observer knows a secret exists, they just cannot read it. Steganography produces an innocent-looking carrier: an observer does not even know to look. The two are complements, and the strongest approach combines them — **encrypt first, then hide the ciphertext**. That way, if the hidden data is ever found, it is still useless without the key.
+
+<Callout type="note" title="Security through obscurity is not enough">
+  Steganography alone is fragile: once the hiding technique is known, the data
+  is exposed. Treat concealment as a layer on top of real cryptography, never as
+  a replacement for it. See [Symmetric vs Asymmetric
+  Cryptography](/learn/symmetric-vs-asymmetric) for the encryption half of the
+  equation.
+</Callout>
+
+## Common hiding techniques
+
+**Image LSB (least-significant bit).** A pixel's color value barely changes if you flip its lowest bit, so you can overwrite the LSB of each color channel with bits of your secret. The image looks identical to the eye, yet a full message can ride along in the noise. This is the classic image-stego method, and it works cleanly only on lossless formats (PNG, BMP) — JPEG's lossy compression scrambles LSBs. Explore the bit-planes of an image in the [Steganography LSB Helper](/tools/stego-lsb).
+
+**Metadata stuffing.** Hide text inside EXIF, IPTC, or XMP fields, comment blocks, or other metadata containers that most viewers never display. Quick to do and quick to find — read those fields with the [EXIF / Metadata Viewer](/tools/exif-viewer) and the [Metadata & EXIF](/learn/metadata-and-exif) guide.
+
+**Appended data after EOF.** Many formats have a defined end-of-file marker, and most viewers stop reading there. Anything you concatenate _after_ that marker is ignored by the viewer but still physically present in the file — a favorite trick is gluing a ZIP archive onto the tail of a PNG.
+
+**Audio and whitespace stego.** Audio files hide data in sample LSBs or inaudible frequency bands. Text and source code can hide secrets in trailing whitespace, mixed tabs/spaces, or zero-width Unicode characters — the [Character Inspector](/tools/character-inspector) surfaces those invisible code points.
+
+## Detecting hidden data
+
+Steganalysis is the hunt for these tricks. A practical workflow layers cheap, fast checks first:
+
+- **File-size anomalies.** A photo that is far larger than its dimensions warrant, or a "small" file that is suspiciously heavy, is a red flag.
+- **Entropy analysis.** Encrypted or compressed payloads have near-random, high entropy. A region of an otherwise ordinary image with sharply elevated entropy suggests hidden, encrypted data. The [Entropy Analyzer](/tools/entropy-analyzer) charts entropy across a file so you can spot the bump.
+- **Strings.** Embedded text, URLs, or archive signatures often leak as readable strings. The [String Extractor](/tools/string-extractor) pulls printable ASCII and UTF-16 with offsets.
+- **Magic bytes / signatures.** A file whose extension does not match its real header — or which contains a _second_ file's signature partway through — betrays appended or embedded content. Check the true type with the [File Signature Identifier](/tools/file-signature-id).
+- **LSB visualization.** Tools like _stegsolve_ (and the [Steganography LSB Helper](/tools/stego-lsb)) display individual bit-planes; hidden data often shows up as visible structure in a plane that should look like random noise.
+- **binwalk.** Scans for embedded files and signatures throughout a binary — the go-to for appended-data tricks.
+
+```bash
+# A fast triage workflow on a suspicious image
+file suspicious.png            # confirm the real type
+strings -n 8 suspicious.png    # look for leaked text / "PK" zip headers
+binwalk suspicious.png         # scan for embedded files & offsets
+binwalk -e suspicious.png      # extract whatever it finds (e.g. a hidden zip)
+exiftool suspicious.png        # dump metadata fields for stuffed text
+```
+
+<Callout type="tip" title="Always start broad, then go deep">
+  Run `file`, `strings`, `exiftool`, and `binwalk` before reaching for
+  pixel-level analysis. The overwhelming majority of beginner and intermediate
+  stego — especially in CTFs — is appended data or stuffed metadata that these
+  four commands reveal in seconds. Save LSB bit-plane work for when the easy
+  passes come up empty. The full triage order lives in the [CTF Forensics
+  Cheat-Sheet](/learn/ctf-cheatsheet).
+</Callout>
+
+## A worked detection example
+
+Suppose `binwalk -e suspicious.png` extracts a ZIP archive that the image viewer never showed. That tells you data was appended past the PNG's end marker. If that ZIP is password-protected and its contents look like high-entropy noise in the [Entropy Analyzer](/tools/entropy-analyzer), the author likely encrypted the payload before hiding it — concealment layered on top of cryptography, exactly as recommended above.
+
+<Callout type="danger" title="Lawful and authorized use only">
+  Steganography and steganalysis are presented here for education, CTFs, and
+  authorized investigation. Hiding data to evade lawful oversight, or extracting
+  hidden data from material you have no right to examine, can be illegal. Only
+  analyze files you are permitted to handle.
+</Callout>
+
+## Why it matters in forensics
+
+Investigators care about steganography from both sides. Defensively, hidden channels are a recognized data-exfiltration method — sensitive data smuggled out inside innocuous images. Offensively (in authorized engagements and CTFs), recovering hidden payloads can be the crux of a challenge. Either way, the same toolkit — signatures, strings, entropy, metadata, and bit-plane analysis — is what turns an "ordinary" file into a confession.
+
+<KeyTakeaways>
+  - Steganography hides the **existence** of data; encryption hides its
+  **contents**. The strongest approach encrypts first, then hides the
+  ciphertext. - Common techniques: image/audio **LSB**, **metadata stuffing**,
+  **data appended after EOF**, and whitespace/zero-width text tricks. - Detect
+  with a layered workflow: file-size anomalies, **entropy**, **strings**,
+  **magic bytes**, **binwalk**, and LSB visualization. - Start with `file`,
+  `strings`, `exiftool`, and `binwalk` — most hidden data, especially in CTFs,
+  falls out immediately. - Concealment alone is not security; once the method is
+  known, the data is exposed. - Use these techniques only on files you are
+  lawfully authorized to analyze.
+</KeyTakeaways>

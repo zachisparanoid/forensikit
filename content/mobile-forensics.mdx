@@ -1,0 +1,98 @@
+Mobile forensics is the practice of recovering and interpreting evidence from phones and tablets — devices that carry a denser, more personal record of someone's life than almost any computer. The catch is that modern handsets are designed to be hard to read, so understanding _how_ data is acquired matters just as much as _what_ you find.
+
+## iOS vs Android: two very different worlds
+
+The two dominant platforms shape every decision an examiner makes.
+
+**iOS** is a closed, tightly integrated stack. Apple controls the hardware, the operating system, and the file system (APFS). Full-disk encryption is on by default, tied to a hardware key in the Secure Enclave, and the same passcode that unlocks the screen derives the key that decrypts user data. That uniformity makes artifacts predictable once you have access — but getting access is the whole problem.
+
+**Android** is fragmented across dozens of manufacturers, chipsets, and OS forks. That fragmentation cuts both ways: there is more variety in bootloaders and security implementations to exploit, but also far more inconsistency. Modern Android uses file-based encryption (FBE) with hardware-backed keys, so a powered-off, never-unlocked device (the "Before First Unlock," or BFU, state) is largely opaque.
+
+<Callout type="note" title="AFU vs BFU">
+  The single most important state for a seized phone is whether it is **After
+  First Unlock (AFU)** — unlocked at least once since boot, so decryption keys
+  live in memory — or **Before First Unlock (BFU)**, where user data is still
+  encrypted at rest. An AFU device yields far more data. This is why
+  investigators keep seized phones powered and isolated in a Faraday bag rather
+  than turning them off.
+</Callout>
+
+## Acquisition methods, from least to most complete
+
+Acquisition is tiered. You always document which method you used, because it defines the scope of what you could possibly have recovered.
+
+- **Manual acquisition** — an examiner navigates the live UI and photographs the screen. No special tooling, but it is slow, non-repeatable, and risks altering data. Useful as a last resort or a quick triage.
+- **Logical acquisition** — pulls data the OS exposes through official channels (backup/sync protocols, content providers). Fast and broadly supported, but limited to what the API offers; deleted records and app sandboxes are mostly out of reach.
+- **File-system acquisition** — copies the actual file-system tree, including app sandboxes, SQLite databases, caches, and plists. This is the sweet spot for most investigations and usually requires elevated access (an exploit, agent, or developer mode).
+- **Physical acquisition** — a bit-for-bit image of the storage, including unallocated space where deleted data may persist. The most complete and the hardest to obtain on modern encrypted devices.
+
+<Callout type="warning" title="Encryption defeats raw imaging">
+  On a current iPhone or a modern Android device, a physical image is just
+  ciphertext without the keys. The keys are protected by the Secure Enclave
+  (iOS) or a TEE/StrongBox (Android), which throttles guesses and can wipe after
+  too many failed attempts. Physical acquisition alone is rarely enough — you
+  also need a way to decrypt.
+</Callout>
+
+## Where the evidence actually lives
+
+Most high-value mobile artifacts are **SQLite databases** inside app sandboxes. Learning to read them directly is a core skill.
+
+| Artifact                         | Typical location (iOS)                   |
+| -------------------------------- | ---------------------------------------- |
+| iMessage / SMS                   | `sms.db`                                 |
+| Call history                     | `CallHistory.storedata`                  |
+| Contacts                         | `AddressBook.sqlitedb`                   |
+| Photos & metadata                | `Photos.sqlite`                          |
+| Location / significant locations | `cache_encryptedB.db`, `routined` caches |
+
+On Android, equivalents live under `/data/data/<package>/databases/`. Beyond SQLite you will encounter **property lists (plists)** on iOS — preference and state files in XML or binary form — and the **keychain**, an encrypted store for credentials, tokens, and Wi-Fi passwords.
+
+Because messaging tables store timestamps in odd epochs (iOS often uses seconds or nanoseconds since 2001-01-01), keep the [Timestamp Converter](/tools/timestamp-converter) handy. A typical query against an iOS message store looks like this:
+
+```sql
+-- Join messages to handles to get readable contacts + Apple/Mac epoch -> Unix
+SELECT
+  datetime(m.date / 1000000000 + 978307200, 'unixepoch') AS sent_at,
+  h.id        AS contact,
+  m.is_from_me,
+  m.text
+FROM message m
+LEFT JOIN handle h ON m.handle_id = h.ROWID
+ORDER BY m.date DESC
+LIMIT 50;
+```
+
+When you pull these databases, hash them on intake so you can prove they have not changed — see [Hashing & Integrity](/learn/hashing-and-integrity) and the [Hash Generator](/tools/hash-generator).
+
+## Cloud backups: the back door
+
+Sometimes the easiest path to a phone's contents is not the phone at all. iCloud and Google account backups can hold message history, photos, contacts, and app data — frequently more than is even on the device, and reachable with proper legal authority and credentials. Cloud backups also retain deleted content longer than the handset does, making them a rich, separate evidence source.
+
+## The tooling landscape
+
+Commercial and open-source tools automate the steps above. **Cellebrite UFED** and **Magnet GrayKey** are the best-known commercial platforms; GrayKey in particular targets passcode recovery on locked iPhones. On the open-source side, **ALEAPP** (Android Logs Events And Protobuf Parser) and **iLEAPP** parse an extraction into a readable timeline of artifacts. These tools are accelerators — they do not replace understanding the underlying SQLite, plist, and keychain structures, which is exactly what lets you validate a tool's output instead of trusting it blindly.
+
+<Callout type="danger" title="Authorization is non-negotiable">
+  Accessing someone's phone or cloud account without a warrant, consent, or
+  equivalent lawful authority is a crime in most jurisdictions and renders any
+  findings inadmissible. Mobile forensics here is presented strictly for
+  education and for work you are explicitly authorized to perform.
+</Callout>
+
+## Building a clean timeline
+
+The payoff of mobile forensics is correlation. Messages, call logs, location caches, app usage, and photo EXIF (see [Metadata & EXIF](/learn/metadata-and-exif)) can be merged into a single timeline that places a person and a device at a place and time. The discipline is in sourcing every entry, preserving original hashes, and documenting the acquisition method so the timeline survives scrutiny.
+
+<KeyTakeaways>
+  - Mobile data is encrypted by default; the **AFU vs BFU** state determines how
+  much you can recover, so keep seized devices powered and isolated. -
+  Acquisition is tiered — manual, logical, file-system, physical — and your
+  method defines the scope of possible evidence. - The richest artifacts are
+  **SQLite databases, plists, and keychains** inside app sandboxes; learn to
+  query them directly. - **Cloud backups** are often a faster and deeper source
+  than the handset itself, given proper authority. - Tools like Cellebrite,
+  GrayKey, ALEAPP, and iLEAPP accelerate analysis but should validate, not
+  replace, your own understanding. - Hash everything on intake and only work on
+  lawfully authorized devices.
+</KeyTakeaways>

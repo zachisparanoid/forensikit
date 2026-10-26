@@ -1,0 +1,92 @@
+A cryptographic hash function takes any input and produces a fixed-size fingerprint — a digest — that changes completely if even one bit of the input changes. That single property underpins how digital forensics proves evidence has not been altered, and it is worth understanding both its power and its limits.
+
+## What a hash actually guarantees
+
+A hash function maps arbitrary data to a fixed-length output (256 bits for SHA-256, regardless of whether you feed it one byte or a terabyte). Good cryptographic hashes have several properties:
+
+- **Deterministic** — the same input always yields the same digest.
+- **Preimage resistance** — given a digest, you cannot feasibly find an input that produces it.
+- **Second-preimage resistance** — given one input, you cannot find a _different_ input with the same digest.
+- **Collision resistance** — you cannot feasibly find _any_ two distinct inputs that share a digest.
+- **Avalanche effect** — flipping one input bit flips roughly half the output bits, so digests reveal nothing about how similar two inputs are.
+
+Try it yourself in the [Hash Generator](/tools/hash-generator): change a single character and watch the entire digest scramble.
+
+```bash
+# Avalanche in action: one letter changes the whole digest
+echo -n "forensikit" | sha256sum
+echo -n "Forensikit" | sha256sum
+```
+
+<Callout type="note" title="Hashing is not encryption">
+  Encryption is reversible with a key; hashing is one-way by design. You can
+  verify that data matches a known hash, but you can never reconstruct the
+  original data from the hash alone. They solve different problems —
+  confidentiality versus integrity.
+</Callout>
+
+## MD5 and SHA-1: broken for security, still useful as checksums
+
+**MD5** (128-bit) and **SHA-1** (160-bit) were the workhorses for decades, but both are now broken for collision resistance. Researchers can deliberately craft two different files with the same MD5 digest in seconds, and the 2017 _SHAttered_ attack produced two distinct PDFs with an identical SHA-1 hash. Once an attacker can manufacture collisions, the hash can no longer _prove_ that two files are the same — a malicious file could be swapped for a benign one with a matching digest.
+
+<Callout type="warning" title="Where MD5/SHA-1 are still acceptable">
+  Collision attacks require an *adversary who controls the input*. For
+  non-adversarial integrity checks — confirming a download did not corrupt,
+  deduplicating files, indexing known-bad files in a hash set — MD5 and SHA-1
+  remain fast and perfectly serviceable. Just never rely on them where someone
+  might deliberately forge a match, including primary evidence integrity.
+</Callout>
+
+## SHA-2 and SHA-3: the modern standards
+
+For anything security-sensitive, use the **SHA-2** family — most commonly **SHA-256** or **SHA-512** — which has no practical collision attacks. **SHA-3** (Keccak) is a structurally different design standardized as a hedge: if a weakness were ever found in SHA-2, SHA-3 provides a drop-in alternative built on entirely different math. In forensics, SHA-256 is the default for evidence integrity, frequently recorded alongside MD5 for cross-compatibility with older tooling. Use the [File Hasher](/tools/file-hasher) to compute and compare both over a whole file.
+
+```bash
+# Compute a digest, save it, and verify later
+sha256sum evidence.dd > evidence.dd.sha256
+sha256sum --check evidence.dd.sha256
+#   evidence.dd: OK
+```
+
+If you encounter a hash in the wild and are unsure what produced it, the [Hash Identifier](/tools/hash-identifier) guesses the algorithm from length and character set.
+
+## Hashing passwords needs more than a hash
+
+Plain cryptographic hashes are _fast_, which is exactly wrong for passwords — speed lets attackers try billions of guesses per second. Password hashing demands two extra ingredients:
+
+- **Salting** — a unique random value mixed into each password before hashing, so identical passwords get different digests and precomputed rainbow tables become useless.
+- **Slowness / work factor** — deliberately expensive functions that make each guess cost real time and memory.
+
+The right tools are **bcrypt**, **PBKDF2**, and **Argon2** (the current best practice, designed to resist GPU and ASIC cracking through high memory use). Explore the trade-offs with the [PBKDF2 Key Derivation](/tools/pbkdf2-tool) and [bcrypt Hash & Verify](/tools/bcrypt-tool) tools, and gauge how guessable a password is with the [Password Analyzer](/tools/password-analyzer).
+
+<Callout type="tip" title="A quick rule of thumb">
+  Use a fast hash (SHA-256) for *file integrity*. Use a slow, salted hash
+  (Argon2/bcrypt/PBKDF2) for *passwords*. Mixing them up is one of the most
+  common and costly mistakes in applied cryptography.
+</Callout>
+
+## HMAC: hashing with a secret
+
+A raw hash proves data is unchanged, but anyone can recompute it — so it does not prove _who_ produced it. An **HMAC** (Hash-based Message Authentication Code) folds a secret key into the hashing process. Only someone with the key can generate or verify a valid HMAC, which provides both integrity _and_ authenticity. HMACs protect API requests, signed cookies, and the signature on JSON Web Tokens — decode one with the [JWT Decoder](/tools/jwt-decoder).
+
+## Hashing in the chain of custody
+
+In forensics, hashing is how integrity is made provable. The moment evidence is acquired, you compute its hash and record it. Every time the evidence is copied, examined, or transferred, you recompute and confirm the digest still matches. A consistent SHA-256 from acquisition through courtroom is the mathematical backbone of a defensible chain of custody — if a single byte had changed, the digest would not match.
+
+```bash
+# Verify a working copy is bit-identical to the original
+sha256sum original.img working_copy.img
+# Identical digests => provably unaltered
+```
+
+<KeyTakeaways>
+  - A cryptographic hash is a one-way, fixed-size fingerprint; its defining
+  strengths are collision resistance and the avalanche effect. - MD5 and SHA-1
+  are broken for adversarial use but remain fine as non-adversarial checksums;
+  use **SHA-256** for evidence integrity. - Hashing is not encryption — it
+  verifies integrity but cannot recover the original data. - Password storage
+  requires salting and a deliberately slow function (Argon2, bcrypt, or PBKDF2),
+  never a bare fast hash. - **HMAC** adds a secret key to prove authenticity as
+  well as integrity. - Matching hashes from acquisition to court are the
+  foundation of a defensible chain of custody.
+</KeyTakeaways>

@@ -1,0 +1,87 @@
+File carving is the recovery of files directly from raw bytes — without any help from the file system's metadata. When the directory entries, inodes, or MFT records are gone, carving reads the data stream itself, recognizes where files begin and end by their internal structure, and reconstructs them. It is how investigators pull images, documents, and executables out of unallocated space, deleted partitions, RAM dumps, and damaged media.
+
+## Why carve at all?
+
+Normally the file system tells you where a file lives: its name points to an inode or MFT record, which points to the data clusters. Carving is what you do when that map is missing or untrustworthy — deleted files whose metadata was reclaimed, a reformatted drive, a corrupt partition table, or a raw capture like a memory image that has no file system at all. Because carving ignores the metadata layer entirely, it can recover data the file system has completely "forgotten." See how that space comes to exist in [File Systems: NTFS, ext4 & APFS](/learn/file-systems-ntfs-ext4-apfs).
+
+## Magic bytes: header and footer carving
+
+Most file formats begin with a fixed **signature** — a few "magic bytes" that identify the type — and many also end with a recognizable footer. Header-footer carving scans the byte stream for a known header, then reads forward to the matching footer (or a maximum length), and extracts everything in between as a candidate file.
+
+```text
+Type   Header (hex)            Footer (hex)        Notes
+----   --------------------    ----------------    ------------------------------
+JPEG   FF D8 FF                FF D9               very common; clear start/end
+PNG    89 50 4E 47 0D 0A 1A 0A 49 45 4E 44 AE 42 60 82  "?PNG" / IEND chunk
+GIF    47 49 46 38 (GIF8)      00 3B               GIF87a / GIF89a variants
+PDF    25 50 44 46 (%PDF)      25 25 45 4F 46 (%%EOF)  may have several EOFs
+ZIP    50 4B 03 04 (PK..)      50 4B 05 06         also docx/xlsx/jar/apk
+ELF    7F 45 4C 46 (.ELF)      (none fixed)         use header + parsed length
+```
+
+You can experiment with this directly: drop a file into the [File Signature Identifier](/tools/file-signature-id) to see its true type from the magic bytes (and catch files disguised with a fake extension), and open raw data in the [Hex Inspector](/tools/hex-inspector) to find headers and footers by offset yourself.
+
+<Callout type="tip" title="Trust the bytes, not the extension">
+  A file named `invoice.pdf` whose first bytes are `4D 5A` (`MZ`) is a Windows
+  executable, not a PDF. Attackers and CTF authors rename files constantly. The
+  magic bytes — not the extension or the icon — are the authoritative signal of
+  what a file actually is.
+</Callout>
+
+## Structure-based carving
+
+Header-footer matching is crude: not every format has a reliable footer, and naive scanning grabs junk between a header and the next coincidental footer. **Structure-based** (or "deep") carving parses the format's internal layout to do better. A valid PNG, for example, is a sequence of length-prefixed chunks ending at IEND; a structure-aware carver reads each chunk's declared length, walks the chunks, and knows the _exact_ end of the file. The same idea applies to ZIP (its central directory lists every entry and its size), MP4/MOV (atoms with declared lengths), and many others. Parsing the structure both finds the true boundaries and validates that the recovered file is actually well-formed.
+
+<Callout type="note" title="Validation reduces false positives">
+  Good carvers don't just extract — they verify. After carving a candidate JPEG,
+  a tool may attempt to decode it; a candidate ZIP may be checked for a valid
+  central directory. Validation throws out the garbage that pure signature
+  scanning produces and tells you which recovered files are likely intact versus
+  corrupt.
+</Callout>
+
+## The fragmentation problem
+
+The hardest challenge in carving is **fragmentation**. Carving assumes a file's bytes are stored contiguously, header to footer, in one run. On a busy or nearly full disk, the file system often splits a file across non-adjacent clusters, interleaving it with other data. A header-footer carver will then sweep up everything in between — including unrelated content — and produce a broken file.
+
+There is no general solution, but several mitigations exist: structure-aware carvers can detect when parsed data stops making sense and try to find the continuation; "SmartCarving"-style approaches reassemble fragments by testing which candidate blocks decode validly when joined. Even so, heavily fragmented files (especially large ones) are frequently unrecoverable by carving alone. This is one more reason physical imaging, captured early, matters: the less the disk churns after deletion, the better your odds.
+
+## Tools (conceptually)
+
+You do not need these to learn the ideas, but knowing the landscape helps:
+
+- **foremost** — classic header/footer carver driven by a configurable signature list.
+- **scalpel** — a foremost descendant tuned for speed on large images.
+- **photorec** — extremely popular, format-aware, recovers a very wide range of types and validates structure as it goes.
+- **bulk_extractor** — scans for features (emails, URLs, card numbers) rather than whole files, handy for fast triage.
+
+```bash
+# Illustrative only — carve a disk image into a recovered/ folder
+foremost -t jpg,pdf,zip -i evidence.dd -o recovered/
+
+# Then triage what came out: confirm types and pull readable strings
+file recovered/*           # report true type via magic bytes
+strings -n 8 recovered/jpg/00000123.jpg | head
+```
+
+## Triage in ForensiKit
+
+After carving (or before, on a suspicious blob), ForensiKit's client-side tools help you make sense of raw bytes without anything leaving your browser:
+
+- [File Signature Identifier](/tools/file-signature-id) — confirm a recovered file's true type and flag disguised files.
+- [Hex Inspector](/tools/hex-inspector) — read headers, footers, and structure by offset, and jump straight to a signature.
+- [Entropy Analyzer](/tools/entropy-analyzer) — high, flat entropy suggests encrypted or compressed data; low or structured entropy suggests text, code, or padding. A great way to tell "is this even worth carving?"
+- [String Extractor](/tools/string-extractor) — pull readable ASCII/UTF-16 fragments from a blob to spot filenames, URLs, or text remnants.
+
+Whatever you recover, verify it the same way you would any evidence — record hashes and keep your [Chain of Custody](/learn/chain-of-custody) intact, and only carve from data you are authorized to examine.
+
+<KeyTakeaways>
+
+- Carving recovers files straight from raw bytes when file-system metadata is gone — deleted files, formatted disks, raw captures.
+- Header/footer carving keys off magic-byte signatures; structure-based carving parses internal layout for exact boundaries and validation.
+- The file's true type comes from its magic bytes, not its name or extension.
+- Fragmentation is the core obstacle: non-contiguous files break naive carvers, and heavily fragmented files may be unrecoverable.
+- Tools like foremost, scalpel, photorec, and bulk_extractor automate the scan; validation cuts down false positives.
+- Use signature, hex, entropy, and string analysis to triage and confirm what you carve — and image early to minimize disk churn.
+
+</KeyTakeaways>

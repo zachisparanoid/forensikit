@@ -1,0 +1,83 @@
+Modern cryptography rests on two complementary families: symmetric encryption, where the same secret key both locks and unlocks data, and asymmetric encryption, where a mathematically linked key _pair_ does the job. Knowing where each shines — and where they fail — explains how nearly every secure system on the internet is built.
+
+## Symmetric encryption: one shared key, very fast
+
+In symmetric cryptography a single secret key encrypts and decrypts. The dominant algorithm is **AES** (Advanced Encryption Standard), a block cipher available in 128-, 192-, and 256-bit key sizes. AES is fast — often hardware-accelerated on modern CPUs — and is the right choice for encrypting bulk data: files, disks, database fields, and the actual payload of a TLS connection. You can experiment with it in the [AES Encrypt / Decrypt](/tools/aes-tool) tool.
+
+Symmetric crypto has one structural weakness: **both parties must already share the key**. If you can securely deliver the key, you could arguably have delivered the message the same way. This is the _key-distribution problem_, and it is exactly what asymmetric cryptography solves.
+
+## Asymmetric encryption: a key pair, slower but smarter
+
+Asymmetric (public-key) cryptography uses two keys that are mathematically related: a **public key** you can hand to anyone, and a **private key** you guard. Data encrypted with the public key can only be decrypted with the private key, and vice versa. The main algorithms are **RSA** (based on the difficulty of factoring large numbers) and **ECC / elliptic-curve** schemes like ECDSA and Ed25519 (based on the elliptic-curve discrete-log problem). Generate keys and try encryption and signing in the [RSA & ECDSA Toolkit](/tools/rsa-tool).
+
+The trade-off is performance: asymmetric operations are orders of magnitude slower than AES and can only safely encrypt small amounts of data. So in practice we rarely use it to encrypt files directly.
+
+<Callout type="note" title="ECC does more with smaller keys">
+  A 256-bit elliptic-curve key offers security comparable to a 3072-bit RSA key.
+  The smaller keys mean faster operations and less storage, which is why ECC
+  dominates new designs, mobile, and IoT. RSA is still everywhere because of its
+  long head start and broad compatibility.
+</Callout>
+
+## Hybrid encryption: the best of both
+
+Because symmetric crypto is fast but hard to key-share, and asymmetric crypto solves key-sharing but is slow, real systems combine them. This is **hybrid encryption**, and it is exactly how TLS (the "S" in HTTPS) works:
+
+1. The two parties use asymmetric crypto (or a key-exchange like Diffie-Hellman) to agree on a fresh random **session key**.
+2. All the actual data is then encrypted with fast **symmetric** AES using that session key.
+
+You get the key-distribution superpower of public-key crypto and the speed of symmetric crypto in one handshake.
+
+```bash
+# Hybrid encryption by hand with OpenSSL:
+# 1) Encrypt the big file fast with a random symmetric key
+openssl rand -out key.bin 32
+openssl enc -aes-256-gcm -in report.pdf -out report.enc -pass file:key.bin
+
+# 2) Encrypt just the small symmetric key with the recipient's RSA public key
+openssl pkeyutl -encrypt -pubin -inkey recipient_pub.pem \
+  -in key.bin -out key.enc
+# Send report.enc + key.enc; only the private key can recover key.bin
+```
+
+## Digital signatures: integrity and identity
+
+Asymmetric crypto runs in reverse too. If you encrypt a message digest with your _private_ key, anyone with your _public_ key can verify it — proving the message came from you and was not altered. That is a **digital signature**, and it provides authenticity, integrity, and non-repudiation. Signatures secure software updates, code, certificates, and tokens. (The signature on a JWT is the same idea — inspect one in the [JWT Decoder](/tools/jwt-decoder).) RSA uses PSS padding for signatures; elliptic curves use ECDSA or EdDSA.
+
+<Callout type="tip" title="Encrypt with public, sign with private">
+  A simple mnemonic: to send someone a *secret*, encrypt with **their public**
+  key (only they can read it). To prove *you* wrote something, sign with **your
+  private** key (anyone can verify it). The keys play opposite roles in
+  confidentiality versus authenticity.
+</Callout>
+
+## Modes matter as much as the algorithm
+
+Choosing AES is only half the decision — the **mode of operation** is the other half, and getting it wrong undoes the algorithm's strength.
+
+- **GCM (Galois/Counter Mode)** is _authenticated encryption_: it produces ciphertext _and_ an authentication tag that detects any tampering. It is the modern default.
+- **CBC (Cipher Block Chaining)** only provides confidentiality. On its own it cannot detect tampering and has been the source of padding-oracle attacks, so it needs a separate MAC to be safe.
+- **ECB** should essentially never be used — identical plaintext blocks produce identical ciphertext blocks, leaking structure (the infamous "ECB penguin").
+
+<Callout type="warning" title="Prefer authenticated encryption">
+  If you remember one rule, make it this: use an authenticated mode like
+  **AES-GCM** (or a construction like AES + HMAC). Encryption without integrity
+  protection invites attacks that quietly modify ciphertext. The [AES Encrypt /
+  Decrypt](/tools/aes-tool) tool defaults to GCM for exactly this reason.
+</Callout>
+
+## Choosing key sizes
+
+Sensible minimums today: **AES-256** for symmetric (AES-128 is also still strong), **RSA-3072** or larger for new RSA keys, and **256-bit curves** (such as P-256 or Curve25519) for ECC. Avoid anything weaker for new systems, and watch the horizon: post-quantum algorithms are being standardized because a future quantum computer would threaten RSA and ECC — though well-keyed symmetric AES remains comparatively resilient.
+
+<KeyTakeaways>
+  - **Symmetric** (AES) uses one shared key and is fast — ideal for bulk data —
+  but cannot solve key distribution on its own. - **Asymmetric** (RSA, ECC) uses
+  a public/private key pair to solve key sharing and enable signatures, at the
+  cost of speed. - **Hybrid encryption** (as in TLS) uses asymmetric crypto to
+  exchange a key, then symmetric crypto for the data. - **Digital signatures**
+  prove authenticity and integrity by signing with a private key and verifying
+  with the public key. - The **mode** matters: prefer authenticated encryption
+  like AES-GCM; avoid plain CBC without a MAC, and never use ECB. - Use AES-256,
+  RSA-3072+, or 256-bit curves, and keep post-quantum migration on your radar.
+</KeyTakeaways>

@@ -1,0 +1,123 @@
+Capture-the-flag forensics challenges reward a fast, repeatable triage habit far more than clever guessing. This cheat-sheet gives you a triage order, a map from challenge type to the right ForensiKit tool, and quick tricks for identifying encodings, hashes, and file types on sight.
+
+## The universal triage workflow
+
+When you get a mystery file, run these in order. Each step is cheap, and most flags fall out before you reach the bottom.
+
+1. **`file`** — what is it really? Do not trust the extension.
+2. **`strings`** — scan for readable text, flags, URLs, and embedded signatures.
+3. **`exiftool`** — dump metadata; flags hide in comments, GPS, and XMP fields.
+4. **`binwalk`** — find and extract embedded or appended files.
+5. **Hex view** — inspect the header and footer; confirm or repair magic bytes.
+6. **Entropy** — high, flat entropy means encrypted or compressed data hiding somewhere.
+
+```bash
+# Drop-in triage block for any unknown file
+file mystery.bin
+strings -n 6 mystery.bin | grep -iE 'flag|ctf|http|key|pass'
+exiftool mystery.bin
+binwalk mystery.bin          # then: binwalk -e mystery.bin
+xxd mystery.bin | head        # header bytes; xxd | tail for the footer
+```
+
+The browser equivalents — [String Extractor](/tools/string-extractor), [EXIF / Metadata Viewer](/tools/exif-viewer), [Hex Inspector](/tools/hex-inspector), [Entropy Analyzer](/tools/entropy-analyzer), and [File Signature Identifier](/tools/file-signature-id) — run entirely client-side, so you can triage even on a locked-down machine.
+
+<Callout type="tip" title="Read the flag format first">
+Most CTFs publish a flag format like `flag{...}` or `CTF{...}`. Grep for that exact pattern after every transformation — decode, decompress, decrypt — because the flag often appears the instant you apply the right operation. Half of "hard" challenges are solved by piping output through `grep -i flag`.
+</Callout>
+
+## Challenge type → tool map
+
+| Challenge type           | What you are doing                          | ForensiKit tool(s)                                                                                                                      |
+| ------------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Image stego              | LSB planes, appended data, stuffed metadata | [Steganography LSB Helper](/tools/stego-lsb), [Entropy Analyzer](/tools/entropy-analyzer), [EXIF / Metadata Viewer](/tools/exif-viewer) |
+| Disguised / corrupt file | Fix or identify magic bytes                 | [File Signature Identifier](/tools/file-signature-id), [Hex Inspector](/tools/hex-inspector)                                            |
+| Disk image               | Carve files, read strings                   | [String Extractor](/tools/string-extractor), [Hex Inspector](/tools/hex-inspector)                                                      |
+| Archive (zip)            | List entries, spot tricks                   | [ZIP Inspector](/tools/zip-inspector)                                                                                                   |
+| Encoding puzzle          | Base64/hex/binary/URL layers                | [Encoding Multitool](/tools/encoding-multitool), [Number Base Converter](/tools/number-base-converter)                                  |
+| Classical cipher         | Caesar / Vigenère / substitution            | [Caesar Cipher](/tools/caesar-cipher), [Vigenère Cipher](/tools/vigenere-cipher), [Frequency Analyzer](/tools/frequency-analyzer)       |
+| XOR crypto               | Single- or repeating-key XOR                | [XOR Cipher](/tools/xor-cipher)                                                                                                         |
+| Modern crypto            | AES, RSA, JWT                               | [AES Encrypt / Decrypt](/tools/aes-tool), [RSA & ECDSA Toolkit](/tools/rsa-tool), [JWT Decoder](/tools/jwt-decoder)                     |
+| Hash cracking / ID       | Identify then attack                        | [Hash Identifier](/tools/hash-identifier), [Hash Generator](/tools/hash-generator), [Password Analyzer](/tools/password-analyzer)       |
+| Weird timestamps         | Convert forensic epochs                     | [Timestamp Converter](/tools/timestamp-converter)                                                                                       |
+| Hidden text              | Zero-width / homoglyph tricks               | [Character Inspector](/tools/character-inspector)                                                                                       |
+
+For deeper dives, pair this with the [Steganography](/learn/steganography), [Classical Ciphers](/learn/classical-ciphers), and [Hashing & Integrity](/learn/hashing-and-integrity) guides.
+
+## Spotting common challenge categories
+
+- **Stego** — image/audio that "looks fine" but the file is oversized or `binwalk` finds extra data. Start with the [Steganography](/learn/steganography) workflow.
+- **Disk image** (`.dd`, `.img`, `.E01`) — mount or carve, then `strings`/grep for the flag and look in deleted/unallocated space.
+- **PCAP** (network capture) — follow TCP streams, extract transferred files, decode HTTP and credentials. (Use Wireshark/`tshark` for the capture itself, then bring extracted payloads here.)
+- **Memory dump** — process and credential extraction with Volatility; carve out strings and embedded files for further analysis.
+- **Crypto** — identify the scheme first, then attack: classical ciphers via frequency analysis, XOR via crib-dragging, modern via the AES/RSA/JWT tools.
+
+## Quick-identify cheats
+
+**Hash by length** (hex characters):
+
+| Length                    | Likely algorithm |
+| ------------------------- | ---------------- |
+| 32                        | MD5              |
+| 40                        | SHA-1            |
+| 64                        | SHA-256          |
+| 128                       | SHA-512          |
+| starts with `$2a$`/`$2b$` | bcrypt           |
+| starts with `$argon2`     | Argon2           |
+
+Unsure? Paste it into the [Hash Identifier](/tools/hash-identifier).
+
+**Encoding fingerprints:**
+
+- **Base64** — alphabet `A–Z a–z 0–9 + /`, length a multiple of 4, often `=` padding at the end.
+- **Base32** — uppercase `A–Z` and digits `2–7`, padded with `=`.
+- **Hex** — only `0–9 a–f`, even length.
+- **URL-encoded** — `%` followed by two hex digits.
+- **Binary** — only `0` and `1`, usually in groups of 8.
+
+Peel layered encodings one at a time in the [Encoding Multitool](/tools/encoding-multitool).
+
+**Magic bytes** (first bytes of a file — view in the [Hex Inspector](/tools/hex-inspector)):
+
+| Bytes (hex)   | File type        |
+| ------------- | ---------------- |
+| `FF D8 FF`    | JPEG             |
+| `89 50 4E 47` | PNG              |
+| `50 4B 03 04` | ZIP / DOCX / JAR |
+| `25 50 44 46` | PDF              |
+| `7F 45 4C 46` | ELF executable   |
+| `47 49 46 38` | GIF              |
+
+<Callout type="warning" title="Trust the magic bytes, not the extension">
+  A frequent CTF trick is a file with the wrong extension or a deliberately
+  corrupted header — a "PNG" that is actually a ZIP, or a JPEG missing its `FF
+  D8 FF` start. Verify the real type with the [File Signature
+  Identifier](/tools/file-signature-id) and repair headers in the [Hex
+  Inspector](/tools/hex-inspector) before assuming a file is broken.
+</Callout>
+
+## Habits that save time
+
+- **Layer your decodes.** Challenges nest transforms (Base64 → hex → ROT13 → flag). Apply one operation, re-`grep`, repeat.
+- **Re-run strings after every extraction.** A carved file often hides the next clue in plain text.
+- **Watch the entropy.** A sudden high-entropy region in an otherwise low-entropy file points straight at hidden encrypted data — the [Entropy Analyzer](/tools/entropy-analyzer) charts it visually.
+- **Keep a notes file.** Record offsets, keys, and partial decodes; multi-stage challenges reward an organized trail.
+
+<Callout type="danger" title="Stay in bounds">
+  These techniques are for sanctioned CTFs, lab environments, and systems you
+  are explicitly authorized to test. Running them against data or infrastructure
+  you do not own or have permission to examine is illegal. Compete and learn
+  ethically.
+</Callout>
+
+<KeyTakeaways>
+  - Always triage in order: **`file` → `strings` → `exiftool` → `binwalk` → hex
+  → entropy** — most flags appear before the end. - Grep for the **flag format**
+  after every decode, decompress, and decrypt step. - Map the challenge type to
+  the right tool: stego, disk image, pcap, memory dump, and crypto each have a
+  clear starting point. - Identify hashes by **length**, encodings by
+  **charset**, and file types by **magic bytes** rather than extension. -
+  Encodings and ciphers are often **layered** — peel them one operation at a
+  time and keep notes. - ForensiKit's tools run client-side, letting you triage
+  anywhere; use them only on authorized data.
+</KeyTakeaways>
